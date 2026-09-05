@@ -22,6 +22,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - uses: anthropics/claude-code-action@v1
+
+      # Issue opened/assigned: implement the change and open a pull request.
+      - if: github.event_name == 'issues'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Address issue #${{ github.event.issue.number }} in ${{ github.repository }}.
+            Run `gh issue view ${{ github.event.issue.number }}` to read the full request.
+            Implement the change on a new branch, commit and push it, then open a
+            pull request against the default branch whose body contains
+            "Closes #${{ github.event.issue.number }}". Finish by commenting the
+            pull request URL on the issue.
+          claude_args: |
+            --allowedTools "Bash,Edit,Write,Read,Glob,Grep"
+
+      # Comment or review mention: default interactive behavior.
+      - if: github.event_name != 'issues'
+        uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
