@@ -9,6 +9,10 @@ contains.
 - `POST /api/Search` takes a query (a list of words) and a case-sensitivity
   flag, and returns matching documents ordered by the number of query words
   they contain.
+- `GET /api/documents/{id}` returns the raw text of an indexed document, for a
+  client that wants to display it. The id comes from a search hit (`mId`). The
+  document is read by the path stored in the index, so the API must run where
+  those paths resolve (same machine or same mount as the indexer).
 - Query words that aren't in the index at all are reported back as `Ignored`.
 - For documents that match but don't contain every query word, the response
   also lists which words are `Missing` from that document.
