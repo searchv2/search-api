@@ -22,6 +22,10 @@ COPY . .
 RUN dotnet publish SearchAPI.csproj -c Release -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+ARG VERSION=1.0.1
+LABEL org.opencontainers.image.title="searchv2-search-api" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/searchv2/search-api"
 WORKDIR /app
 COPY --from=build /app .
 
