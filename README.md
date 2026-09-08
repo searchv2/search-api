@@ -69,6 +69,21 @@ environment variable). To run without the indexer, switch the single DI
 registration in `Infrastructure/DependencyInjection.cs` to `InMemoryDocumentIndex`
 and its canned sample data.
 
+## Docker
+
+```bash
+docker build -t searchv2-search-api .
+docker run --rm -p 5071:8080 \
+  -v "$PWD/../db:/data/db" -v "$PWD/../seData/medium:/data/docs:ro" \
+  searchv2-search-api
+```
+
+The image listens on `8080` and reads `SEARCH_DB_PATH=/data/db/searchmedium.db`;
+mount the shared `db/` directory the indexer wrote. Case-sensitive search
+re-reads source files by the path stored in the index, so mount the document
+folder at the same path the indexer used. See `../docker-compose.yml` for the
+full local stack.
+
 ## Usage
 
 Send a search request to `POST /api/Search`:
