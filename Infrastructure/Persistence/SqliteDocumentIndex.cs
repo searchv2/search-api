@@ -1,29 +1,23 @@
-using System.Collections.Generic;
-
-
-namespace SearchAPI;
-
+using Microsoft.Data.Sqlite;
 using Shared;
-using Shared.Model;
-using Npgsql;
+using SearchAPI.Core.Abstractions;
+using SearchAPI.Core.Entities;
 
+namespace SearchAPI.Infrastructure.Persistence;
 
-public class DatabasePostgres : IDatabase
+/// <summary>
+/// Reads the inverted index from the local SQLite file (see <see cref="SearchDatabase"/>)
+/// that the indexer writes. The connection is opened once and kept for the lifetime of the
+/// service.
+/// </summary>
+public sealed class SqliteDocumentIndex : IDocumentIndex, IDisposable
 {
-    private NpgsqlConnection _connection;
+    private readonly SqliteConnection _connection;
 
-    public DatabasePostgres()
+    public SqliteDocumentIndex()
     {
-        _connection = new NpgsqlConnection(Paths.POSTGRES_DATABASE);
-
+        _connection = new SqliteConnection(SearchDatabase.ConnectionString);
         _connection.Open();
-    }
-
-    private void Execute(string sql)
-    {
-        var cmd = _connection.CreateCommand();
-        cmd.CommandText = sql;
-        cmd.ExecuteNonQuery();
     }
 
     // key is the id of the document, the value is number of search words in the document
@@ -45,7 +39,7 @@ public class DatabasePostgres : IDatabase
         sql += "wordId in " + AsString(wordIds) + " GROUP BY docId ";
         sql += "ORDER BY count DESC;";
 
-        var selectCmd = _connection.CreateCommand();
+        using var selectCmd = _connection.CreateCommand();
         selectCmd.CommandText = sql;
 
         using (var reader = selectCmd.ExecuteReader())
@@ -64,13 +58,13 @@ public class DatabasePostgres : IDatabase
 
     private string AsString(IEnumerable<int> x) => $"({string.Join(',', x)})";
 
-    public IReadOnlyDictionary<int, BEDocument> GetDocDetails(IReadOnlyList<int> docIds)
+    public IReadOnlyDictionary<int, Document> GetDocDetails(IReadOnlyList<int> docIds)
     {
-        var res = new Dictionary<int, BEDocument>();
+        var res = new Dictionary<int, Document>();
         if (docIds.Count == 0)
             return res;
 
-        var selectCmd = _connection.CreateCommand();
+        using var selectCmd = _connection.CreateCommand();
         selectCmd.CommandText =
             $"SELECT id, url, idxTime, creationTime FROM document WHERE id IN {AsString(docIds)}";
 
@@ -78,12 +72,12 @@ public class DatabasePostgres : IDatabase
         while (reader.Read())
         {
             var id = reader.GetInt32(0);
-            res[id] = new BEDocument
+            res[id] = new Document
             {
-                mId = id,
-                mUrl = reader.GetString(1),
-                mIdxTime = reader.GetString(2),
-                mCreationTime = reader.GetString(3),
+                Id = id,
+                Url = reader.GetString(1),
+                IndexedAt = reader.GetString(2),
+                CreatedAt = reader.GetString(3),
             };
         }
         return res;
@@ -98,18 +92,21 @@ public class DatabasePostgres : IDatabase
 
         // query word id -> name
         var names = new Dictionary<int, string>();
-        var nameCmd = _connection.CreateCommand();
-        nameCmd.CommandText = $"SELECT id, name FROM word WHERE id IN {AsString(wordIds)}";
-        using (var reader = nameCmd.ExecuteReader())
+        using (var nameCmd = _connection.CreateCommand())
+        {
+            nameCmd.CommandText = $"SELECT id, name FROM word WHERE id IN {AsString(wordIds)}";
+            using var reader = nameCmd.ExecuteReader();
             while (reader.Read())
                 names[reader.GetInt32(0)] = reader.GetString(1);
+        }
 
         // which query words each document actually has
         var present = new Dictionary<int, HashSet<int>>();
-        var occCmd = _connection.CreateCommand();
-        occCmd.CommandText =
-            $"SELECT docId, wordId FROM Occ WHERE docId IN {AsString(docIds)} AND wordId IN {AsString(wordIds)}";
-        using (var reader = occCmd.ExecuteReader())
+        using (var occCmd = _connection.CreateCommand())
+        {
+            occCmd.CommandText =
+                $"SELECT docId, wordId FROM Occ WHERE docId IN {AsString(docIds)} AND wordId IN {AsString(wordIds)}";
+            using var reader = occCmd.ExecuteReader();
             while (reader.Read())
             {
                 var docId = reader.GetInt32(0);
@@ -117,6 +114,7 @@ public class DatabasePostgres : IDatabase
                     present[docId] = has = new HashSet<int>();
                 has.Add(reader.GetInt32(1));
             }
+        }
 
         foreach (var docId in docIds)
         {
@@ -135,7 +133,7 @@ public class DatabasePostgres : IDatabase
         var res = new List<int>();
         outIgnored = new List<string>();
 
-        var selectCmd = _connection.CreateCommand();
+        using var selectCmd = _connection.CreateCommand();
         selectCmd.CommandText = "SELECT id FROM word WHERE name = @name";
         var nameParam = selectCmd.CreateParameter();
         nameParam.ParameterName = "name";
@@ -153,4 +151,6 @@ public class DatabasePostgres : IDatabase
         }
         return res;
     }
+
+    public void Dispose() => _connection.Dispose();
 }

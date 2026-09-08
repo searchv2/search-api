@@ -12,12 +12,31 @@ contains.
 - Query words that aren't in the index at all are reported back as `Ignored`.
 - For documents that match but don't contain every query word, the response
   also lists which words are `Missing` from that document.
-- Search logic (`SearchLogic.cs`) is backed by an `IDatabase` abstraction
-  (`IDatabase.cs`). The real implementation, `DatabasePostgres.cs`, talks to a
-  Postgres database holding `word`, `document`, and `Occ` (word-document
-  occurrence) tables. Until that database is provisioned, `Program.cs` wires
-  up `MockDatabase.cs` instead, an in-memory stand-in seeded with a handful of
-  sample documents.
+- The search itself (`Application/SearchService.cs`) is backed by the
+  `IDocumentIndex` port (`Core/Abstractions/`). The default implementation,
+  `Infrastructure/Persistence/SqliteDocumentIndex.cs`, reads the local SQLite
+  file in `searchv2/db/` (see `SearchDatabase`) that the `indexer` produces,
+  holding `word`, `document`, and `Occ` (word-document occurrence) tables. Run
+  the indexer first, or switch `Infrastructure/DependencyInjection.cs` to
+  `InMemoryDocumentIndex`, an in-memory stand-in seeded with a handful of sample
+  documents.
+
+## Architecture
+
+Onion architecture; dependencies point inward only:
+
+| Layer | Folder | Contents |
+|-------|--------|----------|
+| Core | `Core/` | Domain entities (`Document`, `SearchHit`, `SearchOutcome`) and ports (`IDocumentIndex`, `IDocumentContentReader`). No framework or package dependencies. |
+| Application | `Application/` | The `SearchService` use case and its `ISearchService` interface. Depends only on Core. |
+| Infrastructure | `Infrastructure/` | Adapters behind the Core ports: `SqliteDocumentIndex`, `InMemoryDocumentIndex`, `FileDocumentContentReader`, `SearchDatabase`, plus DI wiring. |
+| API | `Api/` | Controllers (`endpoints`), request/response `filters`, and the mapping between domain types and the wire models. |
+
+The wire models (`SearchRequest`, `SearchResult`, `DocumentHit`, `BEDocument`)
+live in the shared `SearchUtilities` package and are shared with the frontend.
+Only the API layer references them; `Api/Mapping/SearchContractMapper.cs` maps
+them to and from the domain's `SearchOutcome`, so the wire shape never leaks
+inward.
 
 ## Setup
 
@@ -44,10 +63,11 @@ dotnet build
 dotnet run
 ```
 
-This starts the API with `MockDatabase` (no real database needed) and its
-canned sample data. Switching to `DatabasePostgres` just means changing the
-single DI registration in `Program.cs`; it connects using the connection
-string in `Paths.POSTGRES_DATABASE` (from `SearchUtilities`).
+This starts the API against `SqliteDocumentIndex`, reading the SQLite file the
+indexer wrote to `searchv2/db/` (override the location with the `SEARCH_DB_PATH`
+environment variable). To run without the indexer, switch the single DI
+registration in `Infrastructure/DependencyInjection.cs` to `InMemoryDocumentIndex`
+and its canned sample data.
 
 ## Usage
 
