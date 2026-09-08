@@ -30,7 +30,7 @@ Onion architecture; dependencies point inward only:
 | Core | `Core/` | Domain entities (`Document`, `SearchHit`, `SearchOutcome`) and ports (`IDocumentIndex`, `IDocumentContentReader`). No framework or package dependencies. |
 | Application | `Application/` | The `SearchService` use case and its `ISearchService` interface. Depends only on Core. |
 | Infrastructure | `Infrastructure/` | Adapters behind the Core ports: `SqliteDocumentIndex`, `InMemoryDocumentIndex`, `FileDocumentContentReader`, `SearchDatabase`, plus DI wiring. |
-| API | `Api/` | Controllers (`endpoints`), request/response `filters`, and the mapping between domain types and the wire models. |
+| API | `Api/` | Controllers (`endpoints`) and the mapping between domain types and the wire models. |
 
 The wire models (`SearchRequest`, `SearchResult`, `DocumentHit`, `BEDocument`)
 live in the shared `SearchUtilities` package and are shared with the frontend.

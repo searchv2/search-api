@@ -1,14 +1,9 @@
-using SearchAPI.Api.Filters;
 using SearchAPI.Application;
 using SearchAPI.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers(options =>
-{
-    options.Filters.Add<ApiExceptionFilter>();
-    options.Filters.Add<ValidateSearchRequestFilter>();
-}).AddJsonOptions(o =>
+builder.Services.AddControllers().AddJsonOptions(o =>
 {
     // Shared.Model.BEDocument exposes public fields (mId, mUrl, ...), not properties.
     o.JsonSerializerOptions.IncludeFields = true;
