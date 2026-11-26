@@ -4,7 +4,7 @@ namespace SearchAPI.Core.Abstractions;
 
 /// <summary>
 /// The port through which the domain reads the inverted index. Infrastructure supplies the
-/// implementation (SQLite, or an in-memory stand-in).
+/// implementation (PostgreSQL, or an in-memory stand-in).
 /// </summary>
 public interface IDocumentIndex
 {

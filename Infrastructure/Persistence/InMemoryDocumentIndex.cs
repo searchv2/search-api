@@ -5,9 +5,9 @@ using SearchAPI.Core.Entities;
 namespace SearchAPI.Infrastructure.Persistence;
 
 /// <summary>
-/// In-memory stand-in for <see cref="SqliteDocumentIndex"/>. Holds a small canned dataset
+/// In-memory stand-in for <see cref="PostgresDocumentIndex"/>. Holds a small canned dataset
 /// so /api/search has something to return without running the indexer. Swap the DI
-/// registration in <c>DependencyInjection</c> back to <see cref="SqliteDocumentIndex"/> to
+/// registration in <c>DependencyInjection</c> back to <see cref="PostgresDocumentIndex"/> to
 /// serve the real index - no other code changes.
 /// </summary>
 public sealed class InMemoryDocumentIndex : IDocumentIndex

@@ -1,4 +1,6 @@
-using Microsoft.Data.Sqlite;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
+using Npgsql;
 using Shared;
 using SearchAPI.Core.Abstractions;
 using SearchAPI.Core.Entities;
@@ -6,41 +8,44 @@ using SearchAPI.Core.Entities;
 namespace SearchAPI.Infrastructure.Persistence;
 
 /// <summary>
-/// Reads the inverted index from the local SQLite file (see <see cref="SearchDatabase"/>)
-/// that the indexer writes. The connection is opened once and kept for the lifetime of the
-/// service.
+/// Reads the inverted index from the PostgreSQL database (see <see cref="SearchDatabase"/>)
+/// that the indexer writes. Each operation borrows a pooled connection, so concurrent
+/// requests do not share one connection.
 /// </summary>
-public sealed class SqliteDocumentIndex : IDocumentIndex, IDisposable
+public sealed class PostgresDocumentIndex : IDocumentIndex, IDisposable
 {
-    private readonly SqliteConnection _connection;
+    internal const string MeterName = "SearchV2.Database";
+    private static readonly Meter Meter = new(MeterName);
+    private static readonly Histogram<double> OperationDuration = Meter.CreateHistogram<double>(
+        "searchv2.database.operation.duration", "s",
+        "PostgreSQL index operation duration, including SQL execution and result reading.");
+    private readonly NpgsqlDataSource _dataSource;
 
-    public SqliteDocumentIndex()
+    public PostgresDocumentIndex(string connectionString)
     {
-        _connection = new SqliteConnection(SearchDatabase.ConnectionString);
-        _connection.Open();
+        _dataSource = NpgsqlDataSource.Create(connectionString);
     }
 
     // key is the id of the document, the value is number of search words in the document
     public List<KeyValuePair<int, int>> GetDocuments(List<int> wordIds)
     {
+        using var timing = new OperationTiming(nameof(GetDocuments));
         var res = new List<KeyValuePair<int, int>>();
 
         /* Example sql statement looking for doc id's that
            contain words with id 2 and 3
 
            SELECT docId, COUNT(wordId) as count
-             FROM Occ
-            WHERE wordId in (2,3)
+             FROM occ
+            WHERE wordId = ANY('{2,3}')
          GROUP BY docId
          ORDER BY COUNT(wordId) DESC
          */
 
-        var sql = "SELECT docId, COUNT(wordId) as count FROM Occ where ";
-        sql += "wordId in " + AsString(wordIds) + " GROUP BY docId ";
-        sql += "ORDER BY count DESC;";
-
-        using var selectCmd = _connection.CreateCommand();
-        selectCmd.CommandText = sql;
+        using var selectCmd = _dataSource.CreateCommand(
+            "SELECT docId, COUNT(wordId)::int AS count FROM occ WHERE wordId = ANY(@wordIds) "
+            + "GROUP BY docId ORDER BY count DESC");
+        selectCmd.Parameters.AddWithValue("wordIds", wordIds.ToArray());
 
         using (var reader = selectCmd.ExecuteReader())
         {
@@ -56,17 +61,16 @@ public sealed class SqliteDocumentIndex : IDocumentIndex, IDisposable
         return res;
     }
 
-    private string AsString(IEnumerable<int> x) => $"({string.Join(',', x)})";
-
     public IReadOnlyDictionary<int, Document> GetDocDetails(IReadOnlyList<int> docIds)
     {
         var res = new Dictionary<int, Document>();
         if (docIds.Count == 0)
             return res;
 
-        using var selectCmd = _connection.CreateCommand();
-        selectCmd.CommandText =
-            $"SELECT id, url, idxTime, creationTime FROM document WHERE id IN {AsString(docIds)}";
+        using var timing = new OperationTiming(nameof(GetDocDetails));
+        using var selectCmd = _dataSource.CreateCommand(
+            "SELECT id, url, idxTime, creationTime FROM document WHERE id = ANY(@docIds)");
+        selectCmd.Parameters.AddWithValue("docIds", docIds.ToArray());
 
         using var reader = selectCmd.ExecuteReader();
         while (reader.Read())
@@ -90,11 +94,14 @@ public sealed class SqliteDocumentIndex : IDocumentIndex, IDisposable
         if (docIds.Count == 0)
             return res;
 
+        using var timing = new OperationTiming(nameof(GetMissingWords));
+        using var connection = _dataSource.OpenConnection();
+
         // query word id -> name
         var names = new Dictionary<int, string>();
-        using (var nameCmd = _connection.CreateCommand())
+        using (var nameCmd = new NpgsqlCommand("SELECT id, name FROM word WHERE id = ANY(@wordIds)", connection))
         {
-            nameCmd.CommandText = $"SELECT id, name FROM word WHERE id IN {AsString(wordIds)}";
+            nameCmd.Parameters.AddWithValue("wordIds", wordIds.ToArray());
             using var reader = nameCmd.ExecuteReader();
             while (reader.Read())
                 names[reader.GetInt32(0)] = reader.GetString(1);
@@ -102,10 +109,11 @@ public sealed class SqliteDocumentIndex : IDocumentIndex, IDisposable
 
         // which query words each document actually has
         var present = new Dictionary<int, HashSet<int>>();
-        using (var occCmd = _connection.CreateCommand())
+        using (var occCmd = new NpgsqlCommand(
+            "SELECT docId, wordId FROM occ WHERE docId = ANY(@docIds) AND wordId = ANY(@wordIds)", connection))
         {
-            occCmd.CommandText =
-                $"SELECT docId, wordId FROM Occ WHERE docId IN {AsString(docIds)} AND wordId IN {AsString(wordIds)}";
+            occCmd.Parameters.AddWithValue("docIds", docIds.ToArray());
+            occCmd.Parameters.AddWithValue("wordIds", wordIds.ToArray());
             using var reader = occCmd.ExecuteReader();
             while (reader.Read())
             {
@@ -132,16 +140,18 @@ public sealed class SqliteDocumentIndex : IDocumentIndex, IDisposable
     {
         var res = new List<int>();
         outIgnored = new List<string>();
+        if (query.Length == 0)
+            return res;
 
-        using var selectCmd = _connection.CreateCommand();
-        selectCmd.CommandText = "SELECT id FROM word WHERE name = @name";
-        var nameParam = selectCmd.CreateParameter();
-        nameParam.ParameterName = "name";
+        using var timing = new OperationTiming(nameof(GetWordIds));
+        using var connection = _dataSource.OpenConnection();
+        using var selectCmd = new NpgsqlCommand("SELECT id FROM word WHERE name = @name", connection);
+        var nameParam = new NpgsqlParameter<string>("name", "");
         selectCmd.Parameters.Add(nameParam);
 
         foreach (var aWord in query)
         {
-            nameParam.Value = TextNormalizer.Fold(aWord);
+            nameParam.TypedValue = TextNormalizer.Fold(aWord);
             var id = selectCmd.ExecuteScalar();
 
             if (id != null)
@@ -152,5 +162,22 @@ public sealed class SqliteDocumentIndex : IDocumentIndex, IDisposable
         return res;
     }
 
-    public void Dispose() => _connection.Dispose();
+    private readonly struct OperationTiming : IDisposable
+    {
+        private readonly string _operation;
+        private readonly long _started;
+
+        public OperationTiming(string operation)
+        {
+            _operation = operation;
+            _started = Stopwatch.GetTimestamp();
+        }
+
+        // Dispose also records failed operations without changing exception handling.
+        public void Dispose() => OperationDuration.Record(
+            Stopwatch.GetElapsedTime(_started).TotalSeconds,
+            new KeyValuePair<string, object?>("operation", _operation));
+    }
+
+    public void Dispose() => _dataSource.Dispose();
 }

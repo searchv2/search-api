@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using Shared;
 using SearchAPI.Core.Abstractions;
 using SearchAPI.Core.Entities;
@@ -10,8 +11,17 @@ namespace SearchAPI.Application;
 /// </summary>
 public sealed class SearchService : ISearchService
 {
+    internal static readonly Meter Meter = new("SearchV2.Search");
+    private static long _activeSearches;
     private readonly IDocumentIndex _index;
     private readonly IDocumentContentReader _content;
+
+    static SearchService()
+    {
+        Meter.CreateObservableGauge(
+            "searchv2.search.active", () => Interlocked.Read(ref _activeSearches),
+            description: "Number of searches currently executing in this API process.");
+    }
 
     public SearchService(IDocumentIndex index, IDocumentContentReader content)
     {
@@ -21,6 +31,7 @@ public sealed class SearchService : ISearchService
 
     public SearchOutcome Search(string[] query, bool caseSensitive)
     {
+        using var activeSearch = new ActiveSearchScope();
         var start = DateTime.Now;
 
         // Convert words to word ids.
@@ -84,6 +95,13 @@ public sealed class SearchService : ISearchService
             IgnoredWords = ignored,
             Elapsed = DateTime.Now - start,
         };
+    }
+
+    private readonly struct ActiveSearchScope : IDisposable
+    {
+        public ActiveSearchScope() => Interlocked.Increment(ref _activeSearches);
+
+        public void Dispose() => Interlocked.Decrement(ref _activeSearches);
     }
 
     /// <summary>

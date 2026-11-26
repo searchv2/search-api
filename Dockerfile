@@ -2,11 +2,12 @@
 #
 #   docker build -t searchv2-search-api .
 #   docker run --rm -p 5071:8080 \
-#     -e SEARCH_DB_PATH=/data/db/searchmedium.db \
-#     -v "$PWD/../db:/data/db" -v "$PWD/../seData/medium:/data/docs:ro" \
+#     -e SEARCH_DB_CONNECTION="Host=<db-host>;Database=searchengine;Username=searcher" \
+#     -e SEARCH_DB_PASSWORD=<password> \
+#     -v "$PWD/../seData/medium:/data/docs:ro" \
 #     searchv2-search-api
 #
-# The indexer must have written the SQLite index first. Case-sensitive search
+# The indexer must have written the PostgreSQL index first. Case-sensitive search
 # re-reads source files by the path stored in the index, so mount the document
 # folder at the same path the indexer used (/data/docs).
 
@@ -29,8 +30,7 @@ LABEL org.opencontainers.image.title="searchv2-search-api" \
 WORKDIR /app
 COPY --from=build /app .
 
-ENV ASPNETCORE_URLS=http://+:8080 \
-    SEARCH_DB_PATH=/data/db/searchmedium.db
+ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 
 ENTRYPOINT ["dotnet", "SearchAPI.dll"]
