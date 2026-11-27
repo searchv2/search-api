@@ -32,8 +32,12 @@ builder.Services.AddStackExchangeRedisCache(options =>
         EndPoints = { redisEndpoint },
         User = builder.Configuration["REDISUSER"],
         Password = builder.Configuration["REDISPASSWORD"],
-        ConnectTimeout = 5000,
-        SyncTimeout = 5000,
+        // Redis is only a cache: do not block startup on it, and fail fast when it is down
+        // so the controller can fall back to PostgreSQL.
+        AbortOnConnectFail = false,
+        ConnectTimeout = 1000,
+        SyncTimeout = 1000,
+        AsyncTimeout = 1000,
     };
     options.InstanceName = "SearchV2_";
 });
